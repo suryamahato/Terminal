@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ubuntu Terminal</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css">
+
+<style>
+html, body{
+    width:100%;
+    height:100%;
+    margin:0;
+    background:#300a24;
+    overflow:hidden;
+    font-family: monospace;
+}
+
+#topbar{
+    height:48px;
+    background:#2b2b2b;
+    color:white;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:18px;
+}
+
+#terminal{
+    width:100%;
+    height:calc(100vh - 48px);
+    padding:5px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="topbar">
+Ubuntu Web Terminal
+</div>
+
+<div id="terminal"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<script>
+const socket = io();
+
+const term = new Terminal({
+    cursorBlink:true,
+    fontSize:16,
+    theme:{
+        background:"#300a24",
+        foreground:"#FFFFFF",
+        cursor:"#FFFFFF"
+    }
+});
+
+term.open(document.getElementById("terminal"));
+
+term.writeln("Ubuntu Web Terminal Ready");
+term.writeln("");
+
+socket.on("output", function(data){
+    term.write(data);
+});
+
+term.onData(function(data){
+    socket.emit("input", data);
+});
+</script>
+
+</body>
+</html>
