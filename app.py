@@ -13,13 +13,13 @@ import logging
 import struct
 import fcntl
 import termios
+import signal
 from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv
-import signal
 
 # Load environment variables
 load_dotenv()
@@ -47,8 +47,8 @@ socketio = SocketIO(
     async_mode='threading',
     ping_timeout=60,
     ping_interval=25,
-    logger=True,
-    engineio_logger=True
+    logger=False,
+    engineio_logger=False
 )
 
 # Global clients dictionary
@@ -77,6 +77,8 @@ class TerminalSession:
         if self.pid is not None:
             try:
                 os.kill(self.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass  # Process already terminated
             except Exception as e:
                 logger.error(f"Error killing process {self.pid}: {e}")
 
@@ -88,7 +90,7 @@ def home():
         return render_template('index.html')
     except Exception as e:
         logger.error(f"Error rendering home page: {e}")
-        return jsonify({'error': 'Failed to load terminal'}), 500
+        return jsonify({'error': 'Failed to load terminal', 'details': str(e)}), 500
 
 
 @app.route('/api/health')
@@ -153,6 +155,12 @@ def on_connect():
         session.pid = pid
         session.fd = fd
         
+        # Set initial window size
+        try:
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+        except Exception as e:
+            logger.warning(f"Could not set initial terminal size: {e}")
+        
         with clients_lock:
             clients[sid] = session
         
@@ -191,10 +199,17 @@ def read_and_forward(sid, fd):
                 try:
                     data = os.read(fd, 4096)
                     if data:
-                        socketio.emit('output', data.decode(errors='replace'), to=sid)
+                        try:
+                            socketio.emit('output', data.decode(errors='replace'), to=sid)
+                        except Exception as e:
+                            logger.debug(f"Could not emit to {sid}: {e}")
+                            break
                     else:
                         # EOF - terminal closed
-                        socketio.emit('closed', {'message': 'Terminal closed'}, to=sid)
+                        try:
+                            socketio.emit('closed', {'message': 'Terminal closed'}, to=sid)
+                        except Exception as e:
+                            logger.debug(f"Could not emit closed event to {sid}: {e}")
                         break
                 except OSError:
                     break
@@ -237,17 +252,27 @@ def on_resize(data):
         cols = int(data.get('cols', 80))
         rows = int(data.get('rows', 24))
         
+        # Validate dimensions
+        if cols < 1 or cols > 500 or rows < 1 or rows > 500:
+            logger.warning(f"Invalid resize dimensions for {sid}: {rows}x{cols}")
+            return
+        
         with clients_lock:
-            if sid in clients:
-                fd = clients[sid].fd
-            else:
+            if sid not in clients:
                 return
+            fd = clients[sid].fd
         
         if fd is not None:
-            # Set the PTY size
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+            try:
+                # Set the PTY size
+                fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+                logger.debug(f"Resized terminal {sid} to {rows}x{cols}")
+            except Exception as e:
+                logger.error(f"Error resizing terminal for {sid}: {e}")
+    except (ValueError, TypeError) as e:
+        logger.error(f"Invalid resize data for {sid}: {e}")
     except Exception as e:
-        logger.error(f"Error resizing terminal for {sid}: {e}")
+        logger.error(f"Error processing resize for {sid}: {e}")
 
 
 @socketio.on('disconnect')
@@ -270,11 +295,15 @@ if __name__ == '__main__':
     logger.info(f"Starting Terminal server on {host}:{port}")
     logger.info(f"Debug mode: {debug}")
     
-    socketio.run(
-        app,
-        host=host,
-        port=port,
-        debug=debug,
-        allow_unsafe_werkzeug=True,
-        log_output=True
-    )
+    try:
+        socketio.run(
+            app,
+            host=host,
+            port=port,
+            debug=debug,
+            allow_unsafe_werkzeug=True,
+            log_output=False
+        )
+    except KeyboardInterrupt:
+        logger.info("Server interrupted by user")
+        sys.exit(0)
