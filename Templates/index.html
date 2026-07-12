@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VPS Web Terminal</title>
     
-    <!-- XTerm CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css">
+    <!-- XTerm CSS (pinned to a compatible version) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@4.19.0/css/xterm.css">
     
     <style>
         * {
@@ -194,164 +194,188 @@
         </div>
     </div>
 
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Scripts: pinned to versions compatible with this code -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@4.19.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.2/dist/socket.io.min.js"></script>
 
     <script>
-        // Terminal initialization
-        const fitAddon = new FitAddon.FitAddon();
-        
-        const term = new Terminal({
-            cursorBlink: true,
-            fontSize: 13,
-            lineHeight: 1.4,
-            fontFamily: "'Monaco', 'Menlo', 'Ubuntu Mono', monospace",
-            theme: {
-                background: '#0a0e27',
-                foreground: '#ffffff',
-                cursor: '#22c55e',
-                black: '#000000',
-                red: '#ff5555',
-                green: '#22c55e',
-                yellow: '#ffff55',
-                blue: '#5555ff',
-                magenta: '#ff55ff',
-                cyan: '#55ffff',
-                white: '#ffffff',
-            },
-            scrollback: 1000,
-            screenReaderMode: false,
-        });
-        
-        term.loadAddon(fitAddon);
-        
-        // Socket.IO connection
-        const socket = io({
-            reconnection: true,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            reconnectionAttempts: 10,
-            transports: ['websocket', 'polling']
-        });
-        
-        let isConnected = false;
-        let sessionStartTime = null;
-        let resizeTimeout = null;
-        
-        // Socket events
-        socket.on('connect', function() {
-            console.log('Connected to server');
-            isConnected = true;
-            updateStatus('connected');
-        });
-        
-        socket.on('connected', function(data) {
-            console.log('Terminal session started:', data);
-            document.getElementById('loading').style.display = 'none';
-            term.clear();
-            term.writeln('\x1b[32m✓ Terminal session initialized\x1b[0m');
-            term.writeln('\x1b[36mShell: ' + (data.shell || 'bash') + '\x1b[0m');
-            term.writeln('');
-            sessionStartTime = new Date();
-        });
-        
-        socket.on('output', function(data) {
-            if (data) {
-                term.write(data);
+        // Safe terminal initialization with feature detection and error handling
+        try {
+            if (typeof Terminal === 'undefined') {
+                throw new Error('XTerm library not loaded (Terminal is undefined). Check script src for xterm.js');
             }
-        });
-        
-        socket.on('closed', function(data) {
-            term.writeln('\n\x1b[33mTerminal session closed: ' + (data.message || 'Unknown reason') + '\x1b[0m');
-            isConnected = false;
-            updateStatus('disconnected');
-        });
-        
-        socket.on('error', function(data) {
-            const message = data.message || data;
-            term.writeln('\x1b[31m✗ Error: ' + message + '\x1b[0m\n');
-        });
-        
-        socket.on('disconnect', function(reason) {
-            console.log('Disconnected from server:', reason);
-            isConnected = false;
-            updateStatus('disconnected');
-            if (reason !== 'io client namespace disconnect') {
-                term.writeln('\n\x1b[31m✗ Connection lost. Attempting to reconnect...\x1b[0m');
+
+            // Fit addon (UMD exposes FitAddon.FitAddon for these builds)
+            const fitAddon = (typeof FitAddon !== 'undefined' && FitAddon.FitAddon) ? new FitAddon.FitAddon() : (typeof FitAddon === 'function' ? new FitAddon() : null);
+
+            const term = new Terminal({
+                cursorBlink: true,
+                fontSize: 13,
+                lineHeight: 1.4,
+                fontFamily: "'Monaco', 'Menlo', 'Ubuntu Mono', monospace",
+                theme: {
+                    background: '#0a0e27',
+                    foreground: '#ffffff',
+                    cursor: '#22c55e',
+                    black: '#000000',
+                    red: '#ff5555',
+                    green: '#22c55e',
+                    yellow: '#ffff55',
+                    blue: '#5555ff',
+                    magenta: '#ff55ff',
+                    cyan: '#55ffff',
+                    white: '#ffffff',
+                },
+                scrollback: 1000,
+                screenReaderMode: false,
+            });
+
+            if (fitAddon && term.loadAddon) {
+                term.loadAddon(fitAddon);
             }
-        });
-        
-        socket.on('reconnect', function() {
-            console.log('Reconnected to server');
-            isConnected = true;
-            updateStatus('connected');
-            term.writeln('\x1b[32m✓ Reconnected\x1b[0m\n');
-        });
-        
-        socket.on('connect_error', function(error) {
-            console.error('Connection error:', error);
-            term.writeln('\x1b[31m✗ Connection error: ' + error.message + '\x1b[0m\n');
-        });
-        
-        // Terminal interactions
-        term.onData(function(data) {
-            if (socket.connected) {
-                socket.emit('input', data);
+
+            // Socket.IO connection (ensure client is available)
+            if (typeof io === 'undefined') {
+                throw new Error('Socket.IO client not loaded (io is undefined). Check script src for socket.io-client');
             }
-        });
-        
-        // Handle terminal resizing with debounce
-        function resizeTerminal() {
-            fitAddon.fit();
-            if (socket.connected) {
-                if (resizeTimeout) {
-                    clearTimeout(resizeTimeout);
+
+            const socket = io({
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                reconnectionAttempts: 10,
+                transports: ['websocket', 'polling']
+            });
+
+            let isConnected = false;
+            let sessionStartTime = null;
+            let resizeTimeout = null;
+
+            // Socket events
+            socket.on('connect', function() {
+                console.log('Connected to server');
+                isConnected = true;
+                updateStatus('connected');
+            });
+
+            socket.on('connected', function(data) {
+                console.log('Terminal session started:', data);
+                const loadingEl = document.getElementById('loading');
+                if (loadingEl) loadingEl.style.display = 'none';
+                term.clear();
+                term.writeln('\x1b[32m✓ Terminal session initialized\x1b[0m');
+                term.writeln('\x1b[36mShell: ' + (data.shell || 'bash') + '\x1b[0m');
+                term.writeln('');
+                sessionStartTime = new Date();
+            });
+
+            socket.on('output', function(data) {
+                if (data) {
+                    term.write(data);
                 }
-                resizeTimeout = setTimeout(function() {
-                    socket.emit('resize', {
-                        cols: term.cols,
-                        rows: term.rows
-                    });
-                }, 100);
+            });
+
+            socket.on('closed', function(data) {
+                term.writeln('\n\x1b[33mTerminal session closed: ' + (data.message || 'Unknown reason') + '\x1b[0m');
+                isConnected = false;
+                updateStatus('disconnected');
+            });
+
+            socket.on('error', function(data) {
+                const message = data && data.message ? data.message : (data || 'Unknown error');
+                try { term.writeln('\x1b[31m✗ Error: ' + message + '\x1b[0m\n'); } catch(e) { console.error('Failed to write to terminal:', e); }
+            });
+
+            socket.on('disconnect', function(reason) {
+                console.log('Disconnected from server:', reason);
+                isConnected = false;
+                updateStatus('disconnected');
+                if (reason !== 'io client namespace disconnect') {
+                    try { term.writeln('\n\x1b[31m✗ Connection lost. Attempting to reconnect...\x1b[0m'); } catch(e) { console.error(e); }
+                }
+            });
+
+            socket.on('reconnect', function() {
+                console.log('Reconnected to server');
+                isConnected = true;
+                updateStatus('connected');
+                try { term.writeln('\x1b[32m✓ Reconnected\x1b[0m\n'); } catch(e) { console.error(e); }
+            });
+
+            socket.on('connect_error', function(error) {
+                console.error('Connection error:', error);
+                try { term.writeln('\x1b[31m✗ Connection error: ' + (error && error.message ? error.message : error) + '\x1b[0m\n'); } catch(e) { console.error(e); }
+            });
+
+            // Terminal interactions
+            term.onData(function(data) {
+                if (socket && socket.connected) {
+                    socket.emit('input', data);
+                }
+            });
+
+            // Handle terminal resizing with debounce
+            function resizeTerminal() {
+                try { if (fitAddon && fitAddon.fit) fitAddon.fit(); } catch(e) { /* ignore */ }
+                if (socket && socket.connected) {
+                    if (resizeTimeout) {
+                        clearTimeout(resizeTimeout);
+                    }
+                    resizeTimeout = setTimeout(function() {
+                        socket.emit('resize', {
+                            cols: term.cols,
+                            rows: term.rows
+                        });
+                    }, 100);
+                }
             }
-        }
-        
-        // Resize on window resize
-        window.addEventListener('resize', resizeTerminal);
-        
-        // Open terminal
-        term.open(document.getElementById('terminal'));
-        
-        // Initial resize
-        setTimeout(resizeTerminal, 100);
-        
-        // Display welcome message
-        term.writeln('\x1b[36m┌─────────────────────────────────────┐\x1b[0m');
-        term.writeln('\x1b[36m│   Welcome to VPS Web Terminal       │\x1b[0m');
-        term.writeln('\x1b[36m│   All commands available (bash,      │\x1b[0m');
-        term.writeln('\x1b[36m│   pip, git, curl, etc.)             │\x1b[0m');
-        term.writeln('\x1b[36m└─────────────────────────────────────┘\x1b[0m');
-        term.writeln('');
-        term.writeln('\x1b[33mConnecting to terminal server...\x1b[0m');
-        
-        // Update status indicator
-        function updateStatus(status) {
-            const statusDot = document.getElementById('status-dot');
-            const sessionInfo = document.getElementById('session-info');
-            
-            if (status === 'connected') {
-                statusDot.classList.remove('disconnected');
-                sessionInfo.textContent = 'Connected';
-            } else {
-                statusDot.classList.add('disconnected');
-                sessionInfo.textContent = 'Disconnected';
+
+            // Resize on window resize
+            window.addEventListener('resize', resizeTerminal);
+
+            // Open terminal
+            term.open(document.getElementById('terminal'));
+
+            // Initial resize
+            setTimeout(resizeTerminal, 100);
+
+            // Display welcome message
+            term.writeln('\x1b[36m┌─────────────────────────────────────┐\x1b[0m');
+            term.writeln('\x1b[36m│   Welcome to VPS Web Terminal       │\x1b[0m');
+            term.writeln('\x1b[36m│   All commands available (bash,      │\x1b[0m');
+            term.writeln('\x1b[36m│   pip, git, curl, etc.)             │\x1b[0m');
+            term.writeln('\x1b[36m└─────────────────────────────────────┘\x1b[0m');
+            term.writeln('');
+            term.writeln('\x1b[33mConnecting to terminal server...\x1b[0m');
+
+            // Update status indicator
+            function updateStatus(status) {
+                const statusDot = document.getElementById('status-dot');
+                const sessionInfo = document.getElementById('session-info');
+                
+                if (status === 'connected') {
+                    statusDot.classList.remove('disconnected');
+                    sessionInfo.textContent = 'Connected';
+                } else {
+                    statusDot.classList.add('disconnected');
+                    sessionInfo.textContent = 'Disconnected';
+                }
             }
+
+            // Prevent context menu (optional)
+            document.addEventListener('contextmenu', e => e.preventDefault());
+
+        } catch (err) {
+            // Hide loading overlay and show a helpful error message
+            const loadingEl = document.getElementById('loading');
+            if (loadingEl) loadingEl.style.display = 'none';
+            const terminalEl = document.getElementById('terminal');
+            if (terminalEl) {
+                terminalEl.innerHTML = '<div style="color:#f88;padding:20px;font-family:monospace">Failed to load terminal: ' + (err && err.message ? err.message : err) + '</div>';
+            }
+            console.error('Terminal initialization error:', err);
         }
-        
-        // Prevent context menu (optional)
-        document.addEventListener('contextmenu', e => e.preventDefault());
     </script>
 </body>
 </html>
