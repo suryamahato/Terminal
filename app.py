@@ -10,6 +10,9 @@ import select
 import subprocess
 import threading
 import logging
+import struct
+import fcntl
+import termios
 from datetime import datetime
 from pathlib import Path
 
@@ -242,9 +245,6 @@ def on_resize(data):
         
         if fd is not None:
             # Set the PTY size
-            s = struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0' * 8))
-            import fcntl
-            import termios
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
     except Exception as e:
         logger.error(f"Error resizing terminal for {sid}: {e}")
